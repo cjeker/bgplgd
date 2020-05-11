@@ -52,6 +52,8 @@ const struct qs {
 	{ 0, NULL }
 };
 
+const char *qs2str(unsigned int qs);
+
 static int
 hex(char x)
 {
@@ -96,33 +98,33 @@ urldecode(char *s, size_t len)
 }
 
 static int
-parse_value(struct lg_ctx *ctx, unsigned int key, enum qs_type type, char *val)
+parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 {
 	/* val can only be NULL if urldecode failed. */
 	if (val == NULL) {
-		lwarnx("NULL QS value");
+		lwarnx("NULL querystring value");
 		return 400;
 	}
 
 	switch (type) {
 	case ONE:
 		if (strcmp("1", val) == 0) {
-			ctx->qs_args[key].one = 1;
+			ctx->qs_args[qs].one = 1;
 		} else if (strcmp("0", val) == 0) {
 			/* silently ignored */
 		} else {
-			lwarnx("bad value %s expected 1", val);
+			lwarnx("%s: bad value %s expected 1", qs2str(qs), val);
 			return 400;
 		}
 		break;
 	case STRING:
 		/* XXX limit string to subset of chars */
-		if (ctx->qs_args[key].string) {
-			lwarnx("STRING already set");
+		if (ctx->qs_args[qs].string) {
+			lwarnx("%s: duplicate argument", qs2str(qs));
 			return 400;
 		}
-		ctx->qs_args[key].string = strdup(val);
-		if (ctx->qs_args[key].string == NULL) {
+		ctx->qs_args[qs].string = strdup(val);
+		if (ctx->qs_args[qs].string == NULL) {
 			lwarn("parse_value");
 			return 500;
 		}
@@ -134,39 +136,39 @@ parse_value(struct lg_ctx *ctx, unsigned int key, enum qs_type type, char *val)
 	case COMMUNITY:
 		break;
 	case FAMILY:
-		if (ctx->qs_args[key].string != NULL) {
-			lwarnx("duplicate FAMILY argument");
+		if (ctx->qs_args[qs].string != NULL) {
+			lwarnx("%s: duplicate argument", qs2str(qs));
 			return 400;
 		}
 		if (strcasecmp("ipv4", val) == 0 ||
 		    strcasecmp("ipv6", val) == 0 ||
 		    strcasecmp("vpnv4", val) == 0 ||
 		    strcasecmp("vpnv6", val) == 0) {
-			ctx->qs_args[key].string = strdup(val);
-			if (ctx->qs_args[key].string == NULL) {
+			ctx->qs_args[qs].string = strdup(val);
+			if (ctx->qs_args[qs].string == NULL) {
 				lwarn("parse_value");
 				return 500;
 			}
 		} else {
-			lwarnx("bad FAMILY value %s", val);
+			lwarnx("%s: bad value %s", qs2str(qs), val);
 			return 400;
 		}
 		break;
 	case OVS:
-		if (ctx->qs_args[key].string) {
-			lwarnx("OVS already set");
+		if (ctx->qs_args[qs].string) {
+			lwarnx("%s: duplicate argument", qs2str(qs));
 			return 400;
 		}
 		if (strcmp("not-found", val) == 0 ||
 		    strcmp("valid", val) == 0 ||
 		    strcmp("invalid", val) == 0) {
-			ctx->qs_args[key].string = strdup(val);
-			if (ctx->qs_args[key].string == NULL) {
+			ctx->qs_args[qs].string = strdup(val);
+			if (ctx->qs_args[qs].string == NULL) {
 				lwarn("parse_value");
 				return 500;
 			}
 		} else {
-			lwarnx("bad OVS value %s", val);
+			lwarnx("%s: bad OVS value %s", qs2str(qs), val);
 			return 400;
 		}
 		break;
@@ -175,40 +177,53 @@ parse_value(struct lg_ctx *ctx, unsigned int key, enum qs_type type, char *val)
 }
 
 int
-parse_querystring(char *qs, struct lg_ctx *ctx)
+parse_querystring(char *param, struct lg_ctx *ctx)
 {
 	size_t len, i;
 	int rv;
 
-	while (qs && *qs) {
-		len = strcspn(qs, "=");
+	while (param && *param) {
+		len = strcspn(param, "=");
 		for (i = 0; qsargs[i].key != NULL; i++)
-			if (strncmp(qsargs[i].key, qs, len) == 0)
+			if (strncmp(qsargs[i].key, param, len) == 0)
 				break;
 		if (qsargs[i].key == NULL) {
-			lwarnx("unknown QS key %.*s", (int)len, qs);
+			lwarnx("unknown querystring key %.*s", (int)len, param);
 			return 400;
 		}
 		if (((1 << qsargs[i].qs) & ctx->qs_mask) == 0) {
-			lwarnx("QS %s not allowed for command", qsargs[i].key);
+			lwarnx("querystring param %s not allowed for command",
+			    qsargs[i].key);
 			return 400;
 		}
-		if (qs[len] != '=') {
-			lwarnx("QS %s without value", qsargs[i].key);
+		if (param[len] != '=') {
+			lwarnx("querystring %s without value", qsargs[i].key);
 			return 400;
 		}
 
-		qs += len + 1;
-		len = strcspn(qs, "&");
+		param += len + 1;
+		len = strcspn(param, "&");
 
 		if ((rv = parse_value(ctx, qsargs[i].qs, qsargs[i].type,
-		    urldecode(qs, len))) != 0)
+		    urldecode(param, len))) != 0)
 			return rv;
 
-		qs += len;
-		if (*qs == '&')
-			qs++;
+		param += len;
+		if (*param == '&')
+			param++;
 	}
 
 	return 0;
+}
+
+const char *
+qs2str(unsigned int qs)
+{
+	size_t i;
+
+	for (i = 0; qsargs[i].key != NULL; i++)
+		if (qsargs[i].qs == qs)
+			return qsargs[i].key;
+
+	lerrx(1, "unknown querystring param %d", qs);
 }
