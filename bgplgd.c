@@ -89,6 +89,8 @@ command_from_path(char *path, struct lg_ctx *ctx)
 
 	for (i = 0; cmds[i].path != NULL; i++) {
 		if (strcmp(cmds[i].path, path) == 0) {
+			ctx->command = i;
+			ctx->qs_mask = cmds[i].qs_mask;
 			return 0;
 		}
 	}
