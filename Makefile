@@ -1,7 +1,7 @@
 #	$OpenBSD: Makefile,v 1.2 2014/12/23 19:32:16 pascal Exp $
 
 PROG=		bgplgd
-SRCS=		bgplgd.c slowcgi.c
+SRCS=		bgplgd.c slowcgi.c qs.c
 CFLAGS+=	-Wall
 CFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
 CLFAGS+=	-Wmissing-declarations -Wredundant-decls

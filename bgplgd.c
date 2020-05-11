@@ -1,31 +1,38 @@
+/*	$OpenBSD$ */
+/*
+ * Copyright (c) 2020 Claudio Jeker <claudio@openbsd.org>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 #include <sys/queue.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "bgplgd.h"
 #include "slowcgi.h"
 #include "http.h"
 
 const struct cmd {
-	const char *path;
-	const char *args[4];
-	const char *filters[20];
+	const char	*path;
+	const char	*args[4];
+	unsigned int	qs_mask;
 } cmds[] = {
-	{ "/summary", { "show", NULL }, { NULL }},
-	{ "/nexthops", { "show", "nexthop", NULL }, { NULL }},
-	{ "/neighbors",
-		{ "show", "neighbor", NULL },
-		{ "ip", "descr", "group", NULL}	},
-	{ "/rib",
-		{ "show", "rib", "detail", NULL },
-		{ "prefix", "all", "or-shorter", "as", "source-as",
-		"transit-as", "peer-as", "empty-as", "community",
-		"large-community", "ext-community", "neighbor", "group",
-		"af", "table", "ovs", "error", "best", NULL }	},
+	{ "/summary", { "show", NULL }, 0 },
+	{ "/nexthops", { "show", "nexthop", NULL }, 0 },
+	{ "/neighbors", { "show", "neighbor", NULL }, QS_MASK_NEIGHBOR },
+	{ "/rib", { "show", "rib", "detail", NULL }, QS_MASK_RIB },
 	{ NULL }
-};
-
-struct lgctx {
-	int bla;
 };
 
 static const char *
@@ -39,6 +46,7 @@ http_error(int *res)
 			return errors[i].error_name;
 
 	/* unknown error - change to 500 */
+	lwarnx("unknown http error %d", *res);
 	*res = 500;
 	return "Internal Server Error";
 }
@@ -75,7 +83,7 @@ error_response(struct request *c, int res)
 }
 
 static int
-command_from_path(char *path, struct lgctx *ctx)
+command_from_path(char *path, struct lg_ctx *ctx)
 {
 	size_t i;
 
@@ -88,13 +96,7 @@ command_from_path(char *path, struct lgctx *ctx)
 }
 
 static int
-args_from_querystring(char *path, struct lgctx *ctx)
-{
-	return 0;
-}
-
-static int
-prep_request(struct request *c, struct lgctx *ctx)
+prep_request(struct request *c, struct lg_ctx *ctx)
 {
 	char *meth, *path, *qs;
 
@@ -109,14 +111,14 @@ prep_request(struct request *c, struct lgctx *ctx)
 	if (command_from_path(path, ctx) != 0)
 		return 404;
 
-	if (args_from_querystring(qs, ctx) != 0)
+	if (parse_querystring(qs, ctx) != 0)
 		return 400;
 
 	return 0;
 }
 
 static void
-do_bgpctl(struct request *c, struct lgctx *ctx)
+do_bgpctl(struct request *c, struct lg_ctx *ctx)
 {
 	char buf[128];
 	const char data[] =
@@ -152,7 +154,7 @@ do_bgpctl(struct request *c, struct lgctx *ctx)
 void
 exec_cgi(struct request *c)
 {
-	struct lgctx ctx;
+	struct lg_ctx ctx;
 	int res;
 
 	memset(&ctx, 0, sizeof(ctx));
