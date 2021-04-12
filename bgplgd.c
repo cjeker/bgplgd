@@ -167,4 +167,3 @@ exec_cgi(struct request *c)
 	do_bgpctl(c, &ctx);
 	return;
 }
-
