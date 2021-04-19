@@ -16,16 +16,21 @@
  */
 
 #include <sys/queue.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "bgplgd.h"
 #include "slowcgi.h"
 #include "http.h"
 
+#define NCMDARGS	4
+
 const struct cmd {
 	const char	*path;
-	const char	*args[4];
+	char		*args[NCMDARGS];
 	unsigned int	qs_mask;
 } cmds[] = {
 	{ "/summary", { "show", NULL }, 0 },
@@ -52,13 +57,14 @@ http_error(int *res)
 }
 
 static void
-error_response(struct request *c, int res)
+error_response(int res)
 {
 	const char *type = "text/html";
 	const char *errstr = http_error(&res);
-	char buf[1024];
 
-	snprintf(buf, sizeof(buf),
+	lwarnx("HTTP status %d: %s", res, errstr);
+
+	printf(
 	    "Content-Type: %s\n"
 	    "Status: %d\n"
 	    "Cache-Control: no-cache\n"
@@ -68,7 +74,7 @@ error_response(struct request *c, int res)
 	    " <head>\n"
 	    "  <meta http-equiv=\"Content-Type\" "
 	    "content=\"%s; charset=utf-8\"/>\n"
-	    "  <title>404 Not Found</title>\n"
+	    "  <title>%d %s</title>\n"
 	    " </head>\n"
 	    " <body>\n"
 	    "  <h1>%d %s</h1>\n"
@@ -76,20 +82,19 @@ error_response(struct request *c, int res)
 	    "  <address>OpenBSD bgplgd</address>\n"
 	    " </body>\n"
 	    "</html>\n",
-	    type, res, type, res, errstr);
+	    type, res, type, res, errstr, res, errstr);
 
-	create_data_record(c, FCGI_STDOUT, buf, strlen(buf));
-	create_end_record(c);
+	exit(0);
 }
 
 static int
-command_from_path(char *path, struct lg_ctx *ctx)
+command_from_path(const char *path, struct lg_ctx *ctx)
 {
 	size_t i;
 
 	for (i = 0; cmds[i].path != NULL; i++) {
 		if (strcmp(cmds[i].path, path) == 0) {
-			ctx->command = i;
+			ctx->command = &cmds[i];
 			ctx->qs_mask = cmds[i].qs_mask;
 			return 0;
 		}
@@ -98,13 +103,9 @@ command_from_path(char *path, struct lg_ctx *ctx)
 }
 
 static int
-prep_request(struct request *c, struct lg_ctx *ctx)
+prep_request(struct lg_ctx *ctx, const char *meth, const char *path,
+    const char *qs)
 {
-	char *meth, *path, *qs;
-
-	meth = env_get(c, "REQUEST_METHOD");
-	path = env_get(c, "PATH_INFO");
-	qs = env_get(c, "QUERY_STRING");
 	if (meth == NULL || path == NULL)
 		return 500;
 	if (strcmp(meth, "GET") != 0)
@@ -119,51 +120,44 @@ prep_request(struct request *c, struct lg_ctx *ctx)
 	return 0;
 }
 
-static void
-do_bgpctl(struct request *c, struct lg_ctx *ctx)
-{
-	char buf[128];
-	const char data[] =
-	    "Content-type: text/html\r\n\r\n<html><head></head><body>here we need stuff<br>\r\n";
-	const char end[] = "</body></html>";
-
-	ldebug("here we need stuff");
-	create_data_record(c, FCGI_STDOUT, data, sizeof(data) - 1);
-
-	snprintf(buf, sizeof(buf), "%s=%s<br>\r\n",
-	     "PATH_INFO", env_get(c, "PATH_INFO"));
-	create_data_record(c, FCGI_STDOUT, buf, strlen(buf));
-	snprintf(buf, sizeof(buf), "%s=%s<br>\r\n",
-	    "QUERY_STRING", env_get(c, "QUERY_STRING"));
-	create_data_record(c, FCGI_STDOUT, buf, strlen(buf));
-	snprintf(buf, sizeof(buf), "%s=%s<br>\r\n",
-	    "SERVER_NAME", env_get(c, "SERVER_NAME"));
-	create_data_record(c, FCGI_STDOUT, buf, strlen(buf));
-	snprintf(buf, sizeof(buf), "%s=%s<br>\r\n",
-	    "REQUEST_METHOD", env_get(c, "REQUEST_METHOD"));
-	create_data_record(c, FCGI_STDOUT, buf, strlen(buf));
-	create_data_record(c, FCGI_STDOUT, end, sizeof(end) - 1);
-
-	create_end_record(c);
-}
 
 /*
- * Fork a new CGI process to handle the request, translating
- * between FastCGI parameter records and CGI's environment variables,
- * as well as between the CGI process' stdin/stdout and the
- * corresponding FastCGI records.
+ * Entry point from the FastCGI handler.
+ * This runs as an own process and can use STDOUT and STDERR.
  */
 void
-exec_cgi(struct request *c)
+call(const char *method, const char *pathinfo, const char *querystring)
 {
 	struct lg_ctx ctx;
+	char *file = "/bin/bgpctl";
+	char *argv[64];
+	size_t i, argc = 0;
 	int res;
 
 	memset(&ctx, 0, sizeof(ctx));
-	if ((res = prep_request(c, &ctx)) != 0) {
-		error_response(c, res);
-		return;
-	}
-	do_bgpctl(c, &ctx);
-	return;
+	if ((res = prep_request(&ctx, method, pathinfo, querystring)) != 0)
+		error_response(res);
+
+	/* Write server header first */
+	printf("Content-type: application/json\r\n\r\n");
+	fflush(stdout);
+
+	argv[argc++] = file;
+	argv[argc++] = "-j";
+	argv[argc++] = "-s";
+	argv[argc++] = "/run/bgpd.rsock";
+
+	for (i = 0; ctx.command->args[i] != NULL; i++)
+		argv[argc++] = ctx.command->args[i];
+
+	argv[argc++] = NULL;
+
+	for (i = 0; argv[i] != NULL; i++)
+		ldebug("argv[%zu], %s", i, argv[i]);
+
+	signal(SIGPIPE, SIG_DFL);
+
+	execvp(file, argv);
+
+	lerr(1, "failed to execute bgpctl");
 }

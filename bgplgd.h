@@ -15,19 +15,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define QS_NEIGHBOR	1
-#define QS_GROUP	2
-#define QS_AS		3
-#define QS_PREFIX	4
-#define QS_COMMUNITY	5
-#define QS_AF		6
-#define QS_RIB		7
-#define QS_OVS		8
-#define QS_BEST		9
-#define QS_ALL		10
-#define QS_SHORTER	11
-#define QS_ERROR	12
-#define QS_MAX		13
+#define QS_NEIGHBOR		1
+#define QS_GROUP		2
+#define QS_AS			3
+#define QS_PREFIX		4
+#define QS_COMMUNITY		5
+#define QS_EXTCOMMUNITY		6
+#define QS_LARGECOMMUNITY	7
+#define QS_AF			8
+#define QS_RIB			9
+#define QS_OVS			10
+#define QS_BEST			11
+#define QS_ALL			12
+#define QS_SHORTER		13
+#define QS_ERROR		14
+#define QS_MAX			15
 
 #define QS_MASK_NEIGHBOR	((1 << QS_NEIGHBOR) | (1 << QS_GROUP))
 #define QS_MASK_RIB						\
@@ -36,13 +38,14 @@
 	(1 << QS_RIB) | (1 << QS_OVS) | (1 << QS_BEST) |	\
 	(1 << QS_ALL) | (1 << QS_SHORTER) | (1 << QS_ERROR))
 
+struct cmd;
 struct lg_ctx {
-	int		command;
-	unsigned int	qs_mask;
-	union	{
-		char		*string;
-		int		one;
-	}		qs_args[QS_MAX];
+	const struct cmd	*command;
+	unsigned int		qs_mask;
+	union {
+		char	*string;
+		int	one;
+	}			qs_args[QS_MAX];
 };
 
 int parse_querystring(const char *, struct lg_ctx *);
