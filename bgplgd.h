@@ -45,4 +45,4 @@ struct lg_ctx {
 	}		qs_args[QS_MAX];
 };
 
-int parse_querystring(char *, struct lg_ctx *);
+int parse_querystring(const char *, struct lg_ctx *);

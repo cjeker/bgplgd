@@ -28,6 +28,8 @@ enum qs_type {
 	PREFIX,
 	AS,
 	COMMUNITY,
+	LARGECOMMUNITY,
+	EXTCOMMUNITY,
 	FAMILY,
 	OVS
 };
@@ -42,6 +44,8 @@ const struct qs {
 	{ QS_AS, "as", AS },
 	{ QS_PREFIX, "prefix", PREFIX },
 	{ QS_COMMUNITY, "community", COMMUNITY },
+	{ QS_LARGECOMMUNITY, "large-community", LARGECOMMUNITY },
+	{ QS_EXTCOMMUNITY, "ext-community", EXTCOMMUNITY },
 	{ QS_AF, "af", FAMILY },
 	{ QS_RIB, "rib", STRING },
 	{ QS_OVS, "ovs", OVS },
@@ -66,7 +70,7 @@ hex(char x)
 }
 
 static char *
-urldecode(char *s, size_t len)
+urldecode(const char *s, size_t len)
 {
 	static char buf[256];
 	size_t i, blen = 0;
@@ -98,6 +102,17 @@ urldecode(char *s, size_t len)
 }
 
 static int
+valid_string(const char *str)
+{
+	unsigned char c;
+
+	while ((c = *str++) != '\0')
+		if (!isalnum(c) && !ispunct(c) && c != ' ')
+			return 0;
+	return 1;
+}
+
+static int
 parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 {
 	/* val can only be NULL if urldecode failed. */
@@ -118,9 +133,13 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		}
 		break;
 	case STRING:
-		/* XXX limit string to subset of chars */
 		if (ctx->qs_args[qs].string) {
 			lwarnx("%s: duplicate argument", qs2str(qs));
+			return 400;
+		}
+		/* limit string to limited ascii chars */
+		if (!valid_string(val)) {
+			lwarnx("%s: bad string", qs2str(qs));
 			return 400;
 		}
 		ctx->qs_args[qs].string = strdup(val);
@@ -130,10 +149,15 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		}
 		break;
 	case PREFIX:
+		/* XXX TODO */
 		break;
 	case AS:
+		/* XXX TODO */
 		break;
 	case COMMUNITY:
+	case LARGECOMMUNITY:
+	case EXTCOMMUNITY:
+		/* XXX TODO */
 		break;
 	case FAMILY:
 		if (ctx->qs_args[qs].string != NULL) {
@@ -177,7 +201,7 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 }
 
 int
-parse_querystring(char *param, struct lg_ctx *ctx)
+parse_querystring(const char *param, struct lg_ctx *ctx)
 {
 	size_t len, i;
 	int rv;
