@@ -52,6 +52,10 @@
 #define FCGI_ALIGN(n)		 \
     (((n) + (FCGI_ALIGNMENT - 1)) & ~(FCGI_ALIGNMENT - 1))
 
+#define STDOUT_DONE		0x1
+#define STDERR_DONE		0x2
+#define SCRIPT_DONE		0x4
+
 #define FCGI_REQUEST_COMPLETE	0
 #define FCGI_CANT_MPX_CONN	1
 #define FCGI_OVERLOADED		2
@@ -89,29 +93,23 @@ struct fcgi_response {
 };
 TAILQ_HEAD(fcgi_response_head, fcgi_response);
 
-struct fcgi_stdin {
-	TAILQ_ENTRY(fcgi_stdin)	entry;
-	uint8_t			data[FCGI_RECORD_SIZE];
-	size_t			data_pos;
-	size_t			data_len;
-};
-TAILQ_HEAD(fcgi_stdin_head, fcgi_stdin);
-
 struct request {
 	LIST_ENTRY(request)		entry;
 	struct event			ev;
 	struct event			resp_ev;
 	struct event			tmo;
+	struct event			script_ev;
+	struct event			script_err_ev;
 	int				fd;
 	uint8_t				buf[FCGI_RECORD_SIZE];
 	size_t				buf_pos;
 	size_t				buf_len;
 	struct fcgi_response_head	response_head;
-	struct fcgi_stdin_head		stdin_head;
 	struct env_head			env;
 	int				env_count;
 	pid_t				command_pid;
 	int				command_status;
+	int				script_flags;
 	uint16_t			id;
 	uint8_t				request_started;
 	uint8_t				request_done;
@@ -153,6 +151,9 @@ void		parse_begin_request(uint8_t *, uint16_t, struct request *,
 		    uint16_t);
 void		parse_params(uint8_t *, uint16_t, struct request *, uint16_t);
 void		parse_stdin(uint8_t *, uint16_t, struct request *, uint16_t);
+void		exec_cgi(struct request *);
+void		script_std_in(int, short, void *);
+void		script_err_in(int, short, void *);
 void		dump_fcgi_record(const char *,
 		    struct fcgi_record_header *);
 void		dump_fcgi_record_header(const char *,
@@ -321,6 +322,8 @@ main(int argc, char *argv[])
 
 	signal_set(&slowcgi_proc.ev_sigchld, SIGCHLD, slowcgi_sig_handler,
 	    &slowcgi_proc);
+	signal_add(&slowcgi_proc.ev_sigchld, NULL);
+
 	signal(SIGPIPE, SIG_IGN);
 
 	event_dispatch();
@@ -438,7 +441,6 @@ slowcgi_accept(int fd, short events, void *arg)
 	c->request_started = 0;
 	c->inflight_fds_accounted = 0;
 	TAILQ_INIT(&c->response_head);
-	TAILQ_INIT(&c->stdin_head);
 
 	event_set(&c->ev, s, EV_READ | EV_PERSIST, slowcgi_request, c);
 	event_add(&c->ev, NULL);
@@ -480,8 +482,15 @@ slowcgi_sig_handler(int sig, short event, void *arg)
 			else
 				c->command_status = WEXITSTATUS(status);
 
-			create_end_record(c);
-			ldebug("wait");
+			ldebug("exit %s%d",
+			    WIFSIGNALED(status) ? "signal" : "",
+			    c->command_status);
+
+			c->script_flags |= SCRIPT_DONE;
+
+			if (c->script_flags == (STDOUT_DONE | STDERR_DONE |
+			    SCRIPT_DONE))
+				create_end_record(c);
 		}
 		if (pid == -1 && errno != ECHILD)
 			lwarn("waitpid");
@@ -725,23 +734,13 @@ parse_params(uint8_t *buf, uint16_t n, struct request *c, uint16_t id)
 void
 parse_stdin(uint8_t *buf, uint16_t n, struct request *c, uint16_t id)
 {
-	struct fcgi_stdin	*node;
-
 	if (c->id != id) {
 		lwarnx("unexpected id, ignoring");
 		return;
 	}
 
-	if ((node = calloc(1, sizeof(struct fcgi_stdin))) == NULL) {
-		lwarnx("cannot calloc stdin node");
-		return;
-	}
-
-	bcopy(buf, node->data, n);
-	node->data_pos = 0;
-	node->data_len = n;
-
-	TAILQ_INSERT_TAIL(&c->stdin_head, node, entry);
+	if (n != 0)
+		lwarnx("unexpected stdin input, ignoring");
 }
 
 size_t
@@ -796,6 +795,169 @@ env_get(struct request *c, const char *key)
 			return (env->val);
 	}
 	return (NULL);
+}
+
+/*
+ * Fork a new CGI process to handle the request, translating
+ * between FastCGI parameter records and CGI's environment variables,
+ * as well as between the CGI process' stdin/stdout and the
+ * corresponding FastCGI records.
+ */
+void
+exec_cgi(struct request *c)
+{
+	int		 s_in[2], s_out[2], s_err[2], i;
+	pid_t		 pid;
+
+	i = 0;
+
+	if (pipe(s_in) == -1)
+		lerr(1, "pipe");
+	if (pipe(s_out) == -1)
+		lerr(1, "pipe");
+	if (pipe(s_err) == -1)
+		lerr(1, "pipe");
+	cgi_inflight--;
+	c->inflight_fds_accounted = 1;
+
+	switch (pid = fork()) {
+	case -1:
+		c->command_status = errno;
+
+		lwarn("fork");
+
+		close(s_in[0]);
+		close(s_out[0]);
+		close(s_err[0]);
+
+		close(s_in[1]);
+		close(s_out[1]);
+		close(s_err[1]);
+
+		c->script_flags = (STDOUT_DONE | STDERR_DONE | SCRIPT_DONE);
+
+		create_end_record(c);
+		return;
+	case 0:
+		/* Child process */
+		if (pledge("stdio rpath exec", NULL) == -1)
+			lerr(1, "pledge");
+		close(s_in[0]);
+		close(s_out[0]);
+		close(s_err[0]);
+
+		if (dup2(s_in[1], STDIN_FILENO) == -1)
+			_exit(1);
+		if (dup2(s_out[1], STDOUT_FILENO) == -1)
+			_exit(1);
+		if (dup2(s_err[1], STDERR_FILENO) == -1)
+			_exit(1);
+
+		close(s_in[1]);
+		close(s_out[1]);
+		close(s_err[1]);
+
+		call(
+		    env_get(c, "REQUEST_METHOD"),
+		    env_get(c, "PATH_INFO"),
+		    env_get(c, "QUERY_STRING"));
+
+		/* should not be reached */
+		_exit(1);
+
+	}
+
+	ldebug("fork %d", pid);
+
+	/* Parent process*/
+	close(s_in[1]);
+	close(s_out[1]);
+	close(s_err[1]);
+
+	fcntl(s_in[0], F_SETFD, FD_CLOEXEC);
+	fcntl(s_out[0], F_SETFD, FD_CLOEXEC);
+	fcntl(s_err[0], F_SETFD, FD_CLOEXEC);
+
+	if (ioctl(s_in[0], FIONBIO, &on) == -1)
+		lerr(1, "script ioctl(FIONBIO)");
+	if (ioctl(s_out[0], FIONBIO, &on) == -1)
+		lerr(1, "script ioctl(FIONBIO)");
+	if (ioctl(s_err[0], FIONBIO, &on) == -1)
+		lerr(1, "script ioctl(FIONBIO)");
+
+	close(s_in[0]);	/* close stdin, bgpctl does not expect anything */
+
+	c->command_pid = pid;
+	event_set(&c->script_ev, s_out[0], EV_READ | EV_PERSIST,
+	    script_std_in, c);
+	event_add(&c->script_ev, NULL);
+	event_set(&c->script_err_ev, s_err[0], EV_READ | EV_PERSIST,
+	    script_err_in, c);
+	event_add(&c->script_err_ev, NULL);
+}
+
+static void
+script_in(int fd, struct event *ev, struct request *c, uint8_t type)
+{
+	struct fcgi_response		*resp;
+	struct fcgi_record_header	*header;
+	ssize_t				 n;
+
+	if ((resp = calloc(1, sizeof(struct fcgi_response))) == NULL) {
+		lwarnx("cannot malloc fcgi_response");
+		return;
+	}
+	header = (struct fcgi_record_header*) resp->data;
+	header->version = 1;
+	header->type = type;
+	header->id = htons(c->id);
+	header->padding_len = 0;
+	header->reserved = 0;
+
+	n = read(fd, resp->data + sizeof(struct fcgi_record_header),
+	    FCGI_CONTENT_SIZE);
+
+	if (n == -1) {
+		switch (errno) {
+		case EINTR:
+		case EAGAIN:
+			free(resp);
+			return;
+		default:
+			n = 0; /* fake empty FCGI_STD{OUT,ERR} response */
+		}
+	}
+	header->content_len = htons(n);
+	resp->data_pos = 0;
+	resp->data_len = n + sizeof(struct fcgi_record_header);
+	slowcgi_add_response(c, resp);
+
+	if (n == 0) {
+		if (type == FCGI_STDOUT)
+			c->script_flags |= STDOUT_DONE;
+		else
+			c->script_flags |= STDERR_DONE;
+
+		if (c->script_flags == (STDOUT_DONE | STDERR_DONE |
+		    SCRIPT_DONE))
+			create_end_record(c);
+		event_del(ev);
+		close(fd);
+	}
+}
+
+void
+script_std_in(int fd, short events, void *arg)
+{
+	struct request *c = arg;
+	script_in(fd, &c->script_ev, c, FCGI_STDOUT);
+}
+
+void
+script_err_in(int fd, short events, void *arg)
+{
+	struct request *c = arg;
+	script_in(fd, &c->script_err_ev, c, FCGI_STDERR);
 }
 
 void
@@ -868,7 +1030,6 @@ void
 cleanup_request(struct request *c)
 {
 	struct fcgi_response	*resp;
-	struct fcgi_stdin	*stdin_node;
 	struct env_val		*env_entry;
 
 	evtimer_del(&c->tmo);
@@ -876,6 +1037,15 @@ cleanup_request(struct request *c)
 		event_del(&c->ev);
 	if (event_initialized(&c->resp_ev))
 		event_del(&c->resp_ev);
+	if (event_initialized(&c->script_ev)) {
+		close(EVENT_FD(&c->script_ev));
+		event_del(&c->script_ev);
+	}
+	if (event_initialized(&c->script_err_ev)) {
+		close(EVENT_FD(&c->script_err_ev));
+		event_del(&c->script_err_ev);
+	}
+
 	close(c->fd);
 	while (!SLIST_EMPTY(&c->env)) {
 		env_entry = SLIST_FIRST(&c->env);
@@ -888,10 +1058,6 @@ cleanup_request(struct request *c)
 	while ((resp = TAILQ_FIRST(&c->response_head))) {
 		TAILQ_REMOVE(&c->response_head, resp, entry);
 		free(resp);
-	}
-	while ((stdin_node = TAILQ_FIRST(&c->stdin_head))) {
-		TAILQ_REMOVE(&c->stdin_head, stdin_node, entry);
-		free(stdin_node);
 	}
 	LIST_REMOVE(c, entry);
 	if (! c->inflight_fds_accounted)

@@ -56,6 +56,7 @@ extern const struct loggers *logger;
 struct request;
 
 char	*env_get(struct request *, const char *);
-void	exec_cgi(struct request *);
 void	create_data_record(struct request *, uint8_t, const void *, size_t);
 void	create_end_record(struct request *);
+
+void	call(const char *, const char *, const char *);
