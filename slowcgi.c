@@ -206,7 +206,7 @@ usage(void)
 {
 	extern char *__progname;
 	fprintf(stderr,
-	    "usage: %s [-d] [-p path] [-s socket] [-U user] [-u user]\n",
+	    "usage: %s [-d] [-p path] [-S socket] [-s socket] [-U user] [-u user]\n",
 	    __progname);
 	exit(1);
 }
@@ -217,6 +217,7 @@ int			debug = 0;
 int			on = 1;
 char			*fcgi_socket = "/var/www/run/bgplgd.sock";
 char			*bgpctlpath = "bgpctl";
+char			*bgpctlsock = "/var/run/bgpd.rsock";
 
 
 /*
@@ -288,13 +289,16 @@ main(int argc, char *argv[])
 		}
 	}
 
-	while ((c = getopt(argc, argv, "dp:s:U:u:")) != -1) {
+	while ((c = getopt(argc, argv, "dp:S:s:U:u:")) != -1) {
 		switch (c) {
 		case 'd':
 			debug++;
 			break;
 		case 'p':
 			bgpctlpath = optarg;
+			break;
+		case 'S':
+			bgpctlsock = optarg;
 			break;
 		case 's':
 			fcgi_socket = optarg;

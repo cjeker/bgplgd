@@ -145,7 +145,7 @@ call(const char *method, const char *pathinfo, const char *querystring)
 	argv[argc++] = bgpctlpath;
 	argv[argc++] = "-j";
 	argv[argc++] = "-s";
-	argv[argc++] = "/var/www/run/bgpd.rsock";
+	argv[argc++] = bgpctlsock;
 
 	for (i = 0; ctx.command->args[i] != NULL; i++)
 		argv[argc++] = ctx.command->args[i];

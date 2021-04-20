@@ -54,6 +54,7 @@ struct lg_ctx {
 };
 
 extern char	*bgpctlpath;
+extern char	*bgpctlsock;
 
 int	parse_querystring(const char *, struct lg_ctx *);
 size_t	qs_argv(char **, size_t, size_t, struct lg_ctx *, int);
