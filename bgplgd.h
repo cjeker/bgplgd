@@ -31,21 +31,27 @@
 #define QS_ERROR		14
 #define QS_MAX			15
 
+/* too add: empty-as, in, out, peer-as, source-as, transit-as */
+
 #define QS_MASK_NEIGHBOR	((1 << QS_NEIGHBOR) | (1 << QS_GROUP))
 #define QS_MASK_RIB						\
 	((1 << QS_NEIGHBOR) | (1 << QS_GROUP) |	(1 << QS_AS) |	\
-	(1 << QS_PREFIX) | (1 << QS_COMMUNITY) | (1 << QS_AF) |	\
-	(1 << QS_RIB) | (1 << QS_OVS) | (1 << QS_BEST) |	\
-	(1 << QS_ALL) | (1 << QS_SHORTER) | (1 << QS_ERROR))
+	(1 << QS_PREFIX) | (1 << QS_COMMUNITY) |		\
+	(1 << QS_EXTCOMMUNITY) | (1 << QS_LARGECOMMUNITY) |	\
+	(1 << QS_AF) |	(1 << QS_RIB) | (1 << QS_OVS) |		\
+	(1 << QS_BEST) | (1 << QS_ALL) | (1 << QS_SHORTER) |	\
+	(1 << QS_ERROR))
 
 struct cmd;
 struct lg_ctx {
 	const struct cmd	*command;
 	unsigned int		qs_mask;
+	unsigned int		qs_set;
 	union {
 		char	*string;
 		int	one;
 	}			qs_args[QS_MAX];
 };
 
-int parse_querystring(const char *, struct lg_ctx *);
+int	parse_querystring(const char *, struct lg_ctx *);
+size_t	qs_argv(char **, size_t, size_t, struct lg_ctx *, int);

@@ -32,11 +32,16 @@ const struct cmd {
 	const char	*path;
 	char		*args[NCMDARGS];
 	unsigned int	qs_mask;
+	int		barenbr;
 } cmds[] = {
 	{ "/summary", { "show", NULL }, 0 },
 	{ "/nexthops", { "show", "nexthop", NULL }, 0 },
-	{ "/neighbors", { "show", "neighbor", NULL }, QS_MASK_NEIGHBOR },
+	{ "/neighbors", { "show", "neighbor", NULL }, QS_MASK_NEIGHBOR, 1 },
 	{ "/rib", { "show", "rib", "detail", NULL }, QS_MASK_RIB },
+	{ "/memory", { "show", "rib", "memory", NULL }, 0 },
+	{ "/interfaces", { "show", "interfaces", NULL }, 0 },
+	{ "/rtr", { "show", "rtr", NULL }, 0 },
+	{ "/sets", { "show", "sets", NULL }, 0 },
 	{ NULL }
 };
 
@@ -138,10 +143,6 @@ call(const char *method, const char *pathinfo, const char *querystring)
 	if ((res = prep_request(&ctx, method, pathinfo, querystring)) != 0)
 		error_response(res);
 
-	/* Write server header first */
-	printf("Content-type: application/json\r\n\r\n");
-	fflush(stdout);
-
 	argv[argc++] = file;
 	argv[argc++] = "-j";
 	argv[argc++] = "-s";
@@ -150,12 +151,20 @@ call(const char *method, const char *pathinfo, const char *querystring)
 	for (i = 0; ctx.command->args[i] != NULL; i++)
 		argv[argc++] = ctx.command->args[i];
 
+	argc = qs_argv(argv, argc, sizeof(argv) / sizeof(argv[0]), &ctx,
+	    ctx.command->barenbr);
+
 	argv[argc++] = NULL;
 
 	for (i = 0; argv[i] != NULL; i++)
 		ldebug("argv[%zu], %s", i, argv[i]);
 
+
 	signal(SIGPIPE, SIG_DFL);
+
+	/* Write server header first */
+	printf("Content-type: application/json\r\n\r\n");
+	fflush(stdout);
 
 	execvp(file, argv);
 

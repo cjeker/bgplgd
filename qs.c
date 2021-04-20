@@ -26,7 +26,7 @@ enum qs_type {
 	ONE,
 	STRING,
 	PREFIX,
-	AS,
+	NUMBER,
 	COMMUNITY,
 	LARGECOMMUNITY,
 	EXTCOMMUNITY,
@@ -41,7 +41,7 @@ const struct qs {
 } qsargs[] = {
 	{ QS_NEIGHBOR, "neighbor", STRING, },
 	{ QS_GROUP, "group", STRING },
-	{ QS_AS, "as", AS },
+	{ QS_AS, "as", NUMBER },
 	{ QS_PREFIX, "prefix", PREFIX },
 	{ QS_COMMUNITY, "community", COMMUNITY },
 	{ QS_LARGECOMMUNITY, "large-community", LARGECOMMUNITY },
@@ -112,6 +112,26 @@ valid_string(const char *str)
 	return 1;
 }
 
+/* validate that the input is pure decimal number */
+static int
+valid_number(const char *str)
+{
+	unsigned char c;
+	int first = 1;
+
+	while ((c = *str++) != '\0') {
+		/* special handling of 0 */
+		if (first && c == '0') {
+			if (*str != '\0')
+				return 0;
+		}
+		first = 0;
+		if (!isdigit(c))
+			return 0;
+	}
+	return 1;
+}
+
 static int
 parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 {
@@ -133,10 +153,6 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		}
 		break;
 	case STRING:
-		if (ctx->qs_args[qs].string) {
-			lwarnx("%s: duplicate argument", qs2str(qs));
-			return 400;
-		}
 		/* limit string to limited ascii chars */
 		if (!valid_string(val)) {
 			lwarnx("%s: bad string", qs2str(qs));
@@ -148,10 +164,18 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 			return 500;
 		}
 		break;
-	case PREFIX:
-		/* XXX TODO */
+	case NUMBER:
+		if (!valid_number(val)) {
+			lwarnx("%s: bad number", qs2str(qs));
+			return 400;
+		}
+		ctx->qs_args[qs].string = strdup(val);
+		if (ctx->qs_args[qs].string == NULL) {
+			lwarn("parse_value");
+			return 500;
+		}
 		break;
-	case AS:
+	case PREFIX:
 		/* XXX TODO */
 		break;
 	case COMMUNITY:
@@ -160,10 +184,6 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		/* XXX TODO */
 		break;
 	case FAMILY:
-		if (ctx->qs_args[qs].string != NULL) {
-			lwarnx("%s: duplicate argument", qs2str(qs));
-			return 400;
-		}
 		if (strcasecmp("ipv4", val) == 0 ||
 		    strcasecmp("ipv6", val) == 0 ||
 		    strcasecmp("vpnv4", val) == 0 ||
@@ -179,10 +199,6 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		}
 		break;
 	case OVS:
-		if (ctx->qs_args[qs].string) {
-			lwarnx("%s: duplicate argument", qs2str(qs));
-			return 400;
-		}
 		if (strcmp("not-found", val) == 0 ||
 		    strcmp("valid", val) == 0 ||
 		    strcmp("invalid", val) == 0) {
@@ -220,6 +236,13 @@ parse_querystring(const char *param, struct lg_ctx *ctx)
 			    qsargs[i].key);
 			return 400;
 		}
+		if (((1 << qsargs[i].qs) & ctx->qs_set) != 0) {
+			lwarnx("querystring param %s already set",
+			    qsargs[i].key);
+			return 400;
+		}
+		ctx->qs_set |= (1 << qsargs[i].qs);
+
 		if (param[len] != '=') {
 			lwarnx("querystring %s without value", qsargs[i].key);
 			return 400;
@@ -238,6 +261,96 @@ parse_querystring(const char *param, struct lg_ctx *ctx)
 	}
 
 	return 0;
+}
+
+size_t
+qs_argv(char **argv, size_t argc, size_t len, struct lg_ctx *ctx, int barenbr)
+{
+	/* keep space for the final NULL in argv */
+	len -= 1;
+
+	/* NEIGHBOR and GROUP are exclusive */
+	if (ctx->qs_set & (1 << QS_NEIGHBOR)) {
+		if (!barenbr)
+			if (argc < len)
+				argv[argc++] = "neighbor";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_NEIGHBOR].string;
+	} else if (ctx->qs_set & (1 << QS_GROUP)) {
+		if (argc < len)
+			argv[argc++] = "group";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_GROUP].string;
+	}
+
+	if (ctx->qs_set & (1 << QS_AS)) {
+		if (argc < len)
+			argv[argc++] = "source-as";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_AS].string;
+	}
+	if (ctx->qs_set & (1 << QS_COMMUNITY)) {
+		if (argc < len)
+			argv[argc++] = "community";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_COMMUNITY].string;
+	}
+	if (ctx->qs_set & (1 << QS_EXTCOMMUNITY)) {
+		if (argc < len)
+			argv[argc++] = "ext-community";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_EXTCOMMUNITY].string;
+	}
+	if (ctx->qs_set & (1 << QS_LARGECOMMUNITY)) {
+		if (argc < len)
+			argv[argc++] = "large-community";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_LARGECOMMUNITY].string;
+	}
+	if (ctx->qs_set & (1 << QS_AF)) {
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_AF].string;
+	}
+	if (ctx->qs_set & (1 << QS_RIB)) {
+		if (argc < len)
+			argv[argc++] = "rib";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_RIB].string;
+	}
+	if (ctx->qs_set & (1 << QS_OVS)) {
+		if (argc < len)
+			argv[argc++] = "ovs";
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_OVS].string;
+	}
+	/* BEST and ERROR are exclusive */
+	if (ctx->qs_args[QS_BEST].one) {
+		if (argc < len)
+			argv[argc++] = "best";
+	} else if (ctx->qs_args[QS_ERROR].one) {
+		if (argc < len)
+			argv[argc++] = "error";
+	}
+
+	/* prefix must be last for show rib */
+	if (ctx->qs_set & (1 << QS_PREFIX)) {
+		if (argc < len)
+			argv[argc++] = ctx->qs_args[QS_PREFIX].string;
+
+		/* ALL and SHORTER are exclusive */
+		if (ctx->qs_args[QS_ALL].one) {
+			if (argc < len)
+				argv[argc++] = "all";
+		} else if (ctx->qs_args[QS_SHORTER].one) {
+			if (argc < len)
+				argv[argc++] = "or-shorter";
+		}
+	}
+
+	if (argc >= len)
+		lwarnx("hit limit of argv in qs_argv");
+
+	return argc;
 }
 
 const char *
