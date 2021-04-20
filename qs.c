@@ -15,7 +15,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <ctype.h>
+#include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,9 +30,6 @@ enum qs_type {
 	STRING,
 	PREFIX,
 	NUMBER,
-	COMMUNITY,
-	LARGECOMMUNITY,
-	EXTCOMMUNITY,
 	FAMILY,
 	OVS
 };
@@ -43,9 +43,9 @@ const struct qs {
 	{ QS_GROUP, "group", STRING },
 	{ QS_AS, "as", NUMBER },
 	{ QS_PREFIX, "prefix", PREFIX },
-	{ QS_COMMUNITY, "community", COMMUNITY },
-	{ QS_LARGECOMMUNITY, "large-community", LARGECOMMUNITY },
-	{ QS_EXTCOMMUNITY, "ext-community", EXTCOMMUNITY },
+	{ QS_COMMUNITY, "community", STRING },
+	{ QS_LARGECOMMUNITY, "large-community", STRING },
+	{ QS_EXTCOMMUNITY, "ext-community", STRING },
 	{ QS_AF, "af", FAMILY },
 	{ QS_RIB, "rib", STRING },
 	{ QS_OVS, "ovs", OVS },
@@ -75,7 +75,6 @@ urldecode(const char *s, size_t len)
 	static char buf[256];
 	size_t i, blen = 0;
 
-	buf[0] = '\0';
 	for (i = 0; i < len; i++) {
 		if (blen >= sizeof(buf))
 			return NULL;
@@ -97,6 +96,7 @@ urldecode(const char *s, size_t len)
 			buf[blen++] = s[i];
 		}
 	}
+	buf[blen] = '\0';
 
 	return buf;
 }
@@ -132,12 +132,43 @@ valid_number(const char *str)
 	return 1;
 }
 
+/* validate a prefix, does not support old 10/8 notation but that is ok */
+static int
+valid_prefix(char *str)
+{
+	struct addrinfo hints, *res;
+	char *p;
+	int mask;
+
+	if ((p = strrchr(str, '/')) != NULL) {
+		const char *errstr;
+		mask = strtonum(p+1, 0, 128, &errstr);
+		if (errstr)
+			return 0;
+		p[0] = '\0';
+	}
+
+	bzero(&hints, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	hints.ai_flags = AI_NUMERICHOST;
+	if (getaddrinfo(str, NULL, &hints, &res) != 0)
+		return 0;
+	if (p) {
+		if (res->ai_family == AF_INET && mask > 32)
+			return 0;
+		p[0] = '/';
+	}
+	freeaddrinfo(res);
+	return 1;
+}
+
 static int
 parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 {
 	/* val can only be NULL if urldecode failed. */
 	if (val == NULL) {
-		lwarnx("NULL querystring value");
+		lwarnx("urldecode of querystring failed");
 		return 400;
 	}
 
@@ -176,12 +207,15 @@ parse_value(struct lg_ctx *ctx, unsigned int qs, enum qs_type type, char *val)
 		}
 		break;
 	case PREFIX:
-		/* XXX TODO */
-		break;
-	case COMMUNITY:
-	case LARGECOMMUNITY:
-	case EXTCOMMUNITY:
-		/* XXX TODO */
+		if (!valid_prefix(val)) {
+			lwarnx("%s: bad prefix", qs2str(qs));
+			return 400;
+		}
+		ctx->qs_args[qs].string = strdup(val);
+		if (ctx->qs_args[qs].string == NULL) {
+			lwarn("parse_value");
+			return 500;
+		}
 		break;
 	case FAMILY:
 		if (strcasecmp("ipv4", val) == 0 ||
