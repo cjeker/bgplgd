@@ -1,5 +1,7 @@
 /*	$OpenBSD: slowcgi.c,v 1.31 2014/04/16 14:43:43 florian Exp $ */
 /*
+ * Copyright (c) 2020 Claudio Jeker <claudio@openbsd.org>
+ * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2013 David Gwynne <dlg@openbsd.org>
  * Copyright (c) 2013 Florian Obser <florian@openbsd.org>
  *
@@ -214,6 +216,49 @@ struct slowcgi_proc	slowcgi_proc;
 int			debug = 0;
 int			on = 1;
 char			*fcgi_socket = "/var/www/run/bgplgd.sock";
+char			*bgpctlpath = "bgpctl";
+
+
+/*
+ * Unveil the command we want to run.
+ * If this has a pathname component in it, interpret as a file
+ * and unveil the file directly.
+ * Otherwise, look up the command in our PATH.
+ */
+static void
+unveil_command(const char *prog)
+{
+	const char *pp;
+	char *save, *cmd, *path;
+	struct stat st;
+
+	if (strchr(prog, '/') != NULL) {
+		if (unveil(prog, "x") == -1)
+			err(1, "%s: unveil", prog);
+		return;
+	}
+
+	if (getenv("PATH") == NULL)
+		lerrx(1, "PATH is unset");
+	if ((path = strdup(getenv("PATH"))) == NULL)
+		lerr(1, NULL);
+	save = path;
+	while ((pp = strsep(&path, ":")) != NULL) {
+		if (*pp == '\0')
+			continue;
+		if (asprintf(&cmd, "%s/%s", pp, prog) == -1)
+			lerr(1, NULL);
+		if (lstat(cmd, &st) == -1) {
+			free(cmd);
+			continue;
+		}
+		if (unveil(cmd, "x") == -1)
+			lerr(1, "%s: unveil", cmd);
+		free(cmd);
+		break;
+	}
+	free(save);
+}
 
 int
 main(int argc, char *argv[])
@@ -223,7 +268,6 @@ main(int argc, char *argv[])
 	struct passwd	*pw;
 	struct stat	 sb;
 	int		 c, fd;
-	const char	*chrootpath = NULL;
 	const char	*sock_user = BGPLGD_USER;
 	const char	*cgi_user = BGPLGD_USER;
 
@@ -250,7 +294,7 @@ main(int argc, char *argv[])
 			debug++;
 			break;
 		case 'p':
-			chrootpath = optarg;
+			bgpctlpath = optarg;
 			break;
 		case 's':
 			fcgi_socket = optarg;
@@ -290,21 +334,12 @@ main(int argc, char *argv[])
 	if (pw == NULL)
 		lerrx(1, "no %s user", cgi_user);
 
-	if (chrootpath == NULL)
-		chrootpath = pw->pw_dir;
-
-	if (chroot(chrootpath) == -1)
-		lerr(1, "chroot(%s)", chrootpath);
-
-	ldebug("chroot: %s", chrootpath);
-
-	if (chdir("/") == -1)
-		lerr(1, "chdir(/)");
-
 	if (setgroups(1, &pw->pw_gid) ||
 	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
 	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
 		lerr(1, "unable to revoke privs");
+
+	unveil_command(bgpctlpath);
 
 	if (pledge("stdio rpath unix proc exec", NULL) == -1)
 		lerr(1, "pledge");

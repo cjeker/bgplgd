@@ -134,7 +134,6 @@ void
 call(const char *method, const char *pathinfo, const char *querystring)
 {
 	struct lg_ctx ctx;
-	char *file = "/bin/bgpctl";
 	char *argv[64];
 	size_t i, argc = 0;
 	int res;
@@ -143,10 +142,10 @@ call(const char *method, const char *pathinfo, const char *querystring)
 	if ((res = prep_request(&ctx, method, pathinfo, querystring)) != 0)
 		error_response(res);
 
-	argv[argc++] = file;
+	argv[argc++] = bgpctlpath;
 	argv[argc++] = "-j";
 	argv[argc++] = "-s";
-	argv[argc++] = "/run/bgpd.rsock";
+	argv[argc++] = "/var/www/run/bgpd.rsock";
 
 	for (i = 0; ctx.command->args[i] != NULL; i++)
 		argv[argc++] = ctx.command->args[i];
@@ -166,7 +165,7 @@ call(const char *method, const char *pathinfo, const char *querystring)
 	printf("Content-type: application/json\r\n\r\n");
 	fflush(stdout);
 
-	execvp(file, argv);
+	execvp(bgpctlpath, argv);
 
 	lerr(1, "failed to execute bgpctl");
 }

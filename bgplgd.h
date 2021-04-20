@@ -53,5 +53,7 @@ struct lg_ctx {
 	}			qs_args[QS_MAX];
 };
 
+extern char	*bgpctlpath;
+
 int	parse_querystring(const char *, struct lg_ctx *);
 size_t	qs_argv(char **, size_t, size_t, struct lg_ctx *, int);
