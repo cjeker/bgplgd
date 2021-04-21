@@ -34,14 +34,14 @@ const struct cmd {
 	unsigned int	qs_mask;
 	int		barenbr;
 } cmds[] = {
-	{ "/summary", { "show", NULL }, 0 },
-	{ "/nexthops", { "show", "nexthop", NULL }, 0 },
-	{ "/neighbors", { "show", "neighbor", NULL }, QS_MASK_NEIGHBOR, 1 },
-	{ "/rib", { "show", "rib", "detail", NULL }, QS_MASK_RIB },
-	{ "/memory", { "show", "rib", "memory", NULL }, 0 },
 	{ "/interfaces", { "show", "interfaces", NULL }, 0 },
+	{ "/memory", { "show", "rib", "memory", NULL }, 0 },
+	{ "/neighbors", { "show", "neighbor", NULL }, QS_MASK_NEIGHBOR, 1 },
+	{ "/nexthops", { "show", "nexthop", NULL }, 0 },
+	{ "/rib", { "show", "rib", "detail", NULL }, QS_MASK_RIB },
 	{ "/rtr", { "show", "rtr", NULL }, 0 },
 	{ "/sets", { "show", "sets", NULL }, 0 },
+	{ "/summary", { "show", NULL }, 0 },
 	{ NULL }
 };
 
