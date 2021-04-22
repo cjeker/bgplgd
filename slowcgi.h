@@ -53,10 +53,3 @@ extern const struct loggers *logger;
 #define linfo(_f...) logger->info(_f)
 #define ldebug(_f...) logger->debug(_f)
 
-struct request;
-
-char	*env_get(struct request *, const char *);
-void	create_data_record(struct request *, uint8_t, const void *, size_t);
-void	create_end_record(struct request *);
-
-void	call(const char *, const char *, const char *);

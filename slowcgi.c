@@ -41,6 +41,8 @@
 #include <unistd.h>
 
 #include "slowcgi.h"
+#include "bgplgd.h"
+#include "http.h"
 
 #define TIMEOUT_DEFAULT		 120
 #define BGPLGD_USER		 "www"
@@ -153,9 +155,14 @@ void		parse_begin_request(uint8_t *, uint16_t, struct request *,
 		    uint16_t);
 void		parse_params(uint8_t *, uint16_t, struct request *, uint16_t);
 void		parse_stdin(uint8_t *, uint16_t, struct request *, uint16_t);
+char		*env_get(struct request *, const char *);
 void		exec_cgi(struct request *);
 void		script_std_in(int, short, void *);
 void		script_err_in(int, short, void *);
+void		create_data_record(struct request *, uint8_t, const void *,
+		    size_t);
+void		create_end_record(struct request *);
+void		cleanup_request(struct request *);
 void		dump_fcgi_record(const char *,
 		    struct fcgi_record_header *);
 void		dump_fcgi_record_header(const char *,
@@ -164,7 +171,6 @@ void		dump_fcgi_begin_request_body(const char *,
 		    struct fcgi_begin_request_body *);
 void		dump_fcgi_end_request_body(const char *,
 		    struct fcgi_end_request_body *);
-void		cleanup_request(struct request *);
 
 const struct loggers conslogger = {
 	err,
@@ -836,6 +842,61 @@ env_get(struct request *c, const char *key)
 	return (NULL);
 }
 
+static const char *
+http_error(int *res)
+{
+	const struct http_error errors[] = HTTP_ERRORS;
+	size_t i;
+
+	for (i = 0; errors[i].error_code != 0; i++)
+		if (errors[i].error_code == *res)
+			return errors[i].error_name;
+
+	/* unknown error - change to 500 */
+	lwarnx("unknown http error %d", *res);
+	*res = 500;
+	return "Internal Server Error";
+}
+
+static void
+error_response(struct request *c, int res)
+{
+	const char *type = "text/html";
+	const char *errstr = http_error(&res);
+	char *buf;
+	int len;
+
+	lwarnx("HTTP status %d: %s", res, errstr);
+
+	len = asprintf(&buf,
+	    "Content-Type: %s\n"
+	    "Status: %d\n"
+	    "Cache-Control: no-cache\n"
+	    "\n"
+	    "<!DOCTYPE html>\n"
+	    "<html>\n"
+	    " <head>\n"
+	    "  <meta http-equiv=\"Content-Type\" "
+	    "content=\"%s; charset=utf-8\"/>\n"
+	    "  <title>%d %s</title>\n"
+	    " </head>\n"
+	    " <body>\n"
+	    "  <h1>%d %s</h1>\n"
+	    "  <hr>\n"
+	    "  <address>OpenBSD bgplgd</address>\n"
+	    " </body>\n"
+	    "</html>\n",
+	    type, res, type, res, errstr, res, errstr);
+
+	if (len == -1)
+		lerr(1, NULL);
+
+	create_data_record(c, FCGI_STDOUT, buf, len);
+	free(buf);
+	c->script_flags = (STDOUT_DONE | STDERR_DONE | SCRIPT_DONE);
+	create_end_record(c);
+}
+
 /*
  * Fork a new CGI process to handle the request, translating
  * between FastCGI parameter records and CGI's environment variables,
@@ -845,10 +906,16 @@ env_get(struct request *c, const char *key)
 void
 exec_cgi(struct request *c)
 {
-	int		 s_in[2], s_out[2], s_err[2], i;
+	struct lg_ctx	 ctx = { 0 };
+	int		 s_in[2], s_out[2], s_err[2], res;
 	pid_t		 pid;
 
-	i = 0;
+	res = prep_request(&ctx, env_get(c, "REQUEST_METHOD"),
+	    env_get(c, "PATH_INFO"), env_get(c, "QUERY_STRING"));
+	if (res != 0) {
+		error_response(c, res);
+		return;
+	}
 
 	if (pipe(s_in) == -1)
 		lerr(1, "pipe");
@@ -874,7 +941,6 @@ exec_cgi(struct request *c)
 		close(s_err[1]);
 
 		c->script_flags = (STDOUT_DONE | STDERR_DONE | SCRIPT_DONE);
-
 		create_end_record(c);
 		return;
 	case 0:
@@ -896,10 +962,7 @@ exec_cgi(struct request *c)
 		close(s_out[1]);
 		close(s_err[1]);
 
-		call(
-		    env_get(c, "REQUEST_METHOD"),
-		    env_get(c, "PATH_INFO"),
-		    env_get(c, "QUERY_STRING"));
+		bgpctl_call(&ctx);
 
 		/* should not be reached */
 		_exit(1);

@@ -16,6 +16,7 @@
  */
 
 #include <sys/queue.h>
+#include <err.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,8 +24,6 @@
 #include <unistd.h>
 
 #include "bgplgd.h"
-#include "slowcgi.h"
-#include "http.h"
 
 #define NCMDARGS	4
 
@@ -45,53 +44,6 @@ const struct cmd {
 	{ NULL }
 };
 
-static const char *
-http_error(int *res)
-{
-	const struct http_error errors[] = HTTP_ERRORS;
-	size_t i;
-
-	for (i = 0; errors[i].error_code != 0; i++)
-		if (errors[i].error_code == *res)
-			return errors[i].error_name;
-
-	/* unknown error - change to 500 */
-	lwarnx("unknown http error %d", *res);
-	*res = 500;
-	return "Internal Server Error";
-}
-
-static void
-error_response(int res)
-{
-	const char *type = "text/html";
-	const char *errstr = http_error(&res);
-
-	lwarnx("HTTP status %d: %s", res, errstr);
-
-	printf(
-	    "Content-Type: %s\n"
-	    "Status: %d\n"
-	    "Cache-Control: no-cache\n"
-	    "\n"
-	    "<!DOCTYPE html>\n"
-	    "<html>\n"
-	    " <head>\n"
-	    "  <meta http-equiv=\"Content-Type\" "
-	    "content=\"%s; charset=utf-8\"/>\n"
-	    "  <title>%d %s</title>\n"
-	    " </head>\n"
-	    " <body>\n"
-	    "  <h1>%d %s</h1>\n"
-	    "  <hr>\n"
-	    "  <address>OpenBSD bgplgd</address>\n"
-	    " </body>\n"
-	    "</html>\n",
-	    type, res, type, res, errstr, res, errstr);
-
-	exit(0);
-}
-
 static int
 command_from_path(const char *path, struct lg_ctx *ctx)
 {
@@ -107,7 +59,12 @@ command_from_path(const char *path, struct lg_ctx *ctx)
 	return 404;
 }
 
-static int
+/*
+ * Prepare a request into a context to call bgpctl.
+ * Parse method, path and querystring. On failure return the correct
+ * HTTP error code. On success 0 is returned.
+ */
+int
 prep_request(struct lg_ctx *ctx, const char *meth, const char *path,
     const char *qs)
 {
@@ -115,49 +72,37 @@ prep_request(struct lg_ctx *ctx, const char *meth, const char *path,
 		return 500;
 	if (strcmp(meth, "GET") != 0)
 		return 405;
-
 	if (command_from_path(path, ctx) != 0)
 		return 404;
-
 	if (parse_querystring(qs, ctx) != 0)
 		return 400;
 
 	return 0;
 }
 
-
 /*
  * Entry point from the FastCGI handler.
- * This runs as an own process and can use STDOUT and STDERR.
+ * This runs as an own process and must use STDOUT and STDERR.
+ * The log functions should no longer be used here.
  */
 void
-call(const char *method, const char *pathinfo, const char *querystring)
+bgpctl_call(struct lg_ctx *ctx)
 {
-	struct lg_ctx ctx;
 	char *argv[64];
 	size_t i, argc = 0;
-	int res;
-
-	memset(&ctx, 0, sizeof(ctx));
-	if ((res = prep_request(&ctx, method, pathinfo, querystring)) != 0)
-		error_response(res);
 
 	argv[argc++] = bgpctlpath;
 	argv[argc++] = "-j";
 	argv[argc++] = "-s";
 	argv[argc++] = bgpctlsock;
 
-	for (i = 0; ctx.command->args[i] != NULL; i++)
-		argv[argc++] = ctx.command->args[i];
+	for (i = 0; ctx->command->args[i] != NULL; i++)
+		argv[argc++] = ctx->command->args[i];
 
-	argc = qs_argv(argv, argc, sizeof(argv) / sizeof(argv[0]), &ctx,
-	    ctx.command->barenbr);
+	argc = qs_argv(argv, argc, sizeof(argv) / sizeof(argv[0]), ctx,
+	    ctx->command->barenbr);
 
 	argv[argc++] = NULL;
-
-	for (i = 0; argv[i] != NULL; i++)
-		ldebug("argv[%zu], %s", i, argv[i]);
-
 
 	signal(SIGPIPE, SIG_DFL);
 
@@ -167,5 +112,5 @@ call(const char *method, const char *pathinfo, const char *querystring)
 
 	execvp(bgpctlpath, argv);
 
-	lerr(1, "failed to execute bgpctl");
+	err(1, "failed to execute %s", bgpctlpath);
 }

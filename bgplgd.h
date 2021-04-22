@@ -56,5 +56,10 @@ struct lg_ctx {
 extern char	*bgpctlpath;
 extern char	*bgpctlsock;
 
+/* qs.c - query string handling */
 int	parse_querystring(const char *, struct lg_ctx *);
 size_t	qs_argv(char **, size_t, size_t, struct lg_ctx *, int);
+
+/* main entry points for slowcgi */
+int	prep_request(struct lg_ctx *, const char *, const char *, const char *);
+void	bgpctl_call(struct lg_ctx *);
