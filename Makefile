@@ -11,7 +11,4 @@ LDADD=  -levent
 DPADD=  ${LIBEVENT}
 MAN=		bgplgd.8
 
-BINDIR=		/var/www/cgi-bin
-BINMODE=	000
-
 .include <bsd.prog.mk>

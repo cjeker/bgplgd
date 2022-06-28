@@ -45,7 +45,8 @@
 #include "http.h"
 
 #define TIMEOUT_DEFAULT		 120
-#define BGPLGD_USER		 "www"
+#define WWW_USER		 "www"
+#define BGPLGD_USER		 "_bgplgd"
 
 #define FCGI_CONTENT_SIZE	 65535
 #define FCGI_PADDING_SIZE	 255
@@ -212,7 +213,7 @@ usage(void)
 {
 	extern char *__progname;
 	fprintf(stderr,
-	    "usage: %s [-d] [-p path] [-S socket] [-s socket] [-U user] [-u user]\n",
+	    "usage: %s [-d] [-p path] [-S socket] [-s socket] [-U user]\n",
 	    __progname);
 	exit(1);
 }
@@ -275,7 +276,7 @@ main(int argc, char *argv[])
 	struct passwd	*pw;
 	struct stat	 sb;
 	int		 c, fd;
-	const char	*sock_user = BGPLGD_USER;
+	const char	*sock_user = WWW_USER;
 	const char	*cgi_user = BGPLGD_USER;
 
 	/*
@@ -311,9 +312,6 @@ main(int argc, char *argv[])
 			break;
 		case 'U':
 			sock_user = optarg;
-			break;
-		case 'u':
-			cgi_user = optarg;
 			break;
 		default:
 			usage();

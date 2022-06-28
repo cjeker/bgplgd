@@ -82,10 +82,6 @@ Change the owner of
 to
 .Ar user
 and its primary group instead of the default www:www.
-.It Fl u Ar user
-Drop privileges to
-.Ar user
-instead of default user www.
 .El
 .Pp
 .Nm
@@ -99,8 +95,8 @@ Show RIB memory statistics.
 .It Pa /neighbors
 Show detailed neighbors information.
 The output can be limited with the following parameters:
-.Bl -tag -width "neighbor=peer" -compact
 .Pp
+.Bl -tag -width "neighbor=peer" -compact
 .It Cm neighbor Ns = Ns Ar peer
 Show infromation for a specific neighbor.
 .Ar peer
@@ -113,8 +109,8 @@ Show the list of BGP nexthops and the result of their validity check.
 .It Pa /rib
 Show routes from the bgpd(8) Routing Information Base.
 The following parameters can be used to filter the output:
-.Bl -tag -width "neighbor=peer" -compact
 .Pp
+.Bl -tag -width "neighbor=peer" -compact
 .It Cm neighbor Ns = Ns Ar peer
 Show infromation for a specific neighbor.
 .Ar peer
@@ -178,6 +174,6 @@ is:
 The
 .Nm
 server first appeared in
-.Ox 7.0 .
+.Ox 7.2 .
 .Sh AUTHORS
 .An Claudio Jeker Aq Mt claudio@openbsd.org
